@@ -215,8 +215,8 @@ def main():
         plt.close(fig)
         
         # 循环刷新逻辑 (保持不变)
-        time.sleep(0.5) 
-        st.rerun()
+        # time.sleep(0.5) 
+        # st.rerun()
 
 
     with col2:
