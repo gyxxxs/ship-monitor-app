@@ -4,42 +4,39 @@ import matplotlib.pyplot as plt
 import time
 from google import genai
 from google.genai import types
-# 引入 pydantic 用于定义工具函数的输入结构
 from pydantic import BaseModel, Field
 
 # --- 0. 环境和工具定义 ---
 
-# 推荐使用 pydantic 定义输入结构，帮助 LLM 准确理解参数
+# 定义工具的输入结构
 class ReportInput(BaseModel):
     """用于生成详细故障诊断报告的工具"""
-    # LLM 会根据这个描述来决定是否调用工具
     fault_id: str = Field(description="当前故障事件的唯一标识ID，例如：'EVENT-20251028-001'")
     severity: str = Field(description="故障的严重程度，例如：'一级预警'或'二级预警'")
 
 class StabilityInput(BaseModel):
     """用于查询船端边缘计算单元和船岸协同通信链路的实时状态和负载率"""
-    # 这个工具不需要参数，但定义 Pydantic 仍有助于文档化
+    # 此工具无需参数，但定义 Pydantic 类有助于文档化
 
 # --- 定义工具函数 ---
-# 工具函数必须返回一个字符串，作为 LLM 的上下文输入
+# 工具函数返回的结果是 LLM 进行最终回复时的上下文
 def generate_diagnostic_report(fault_id: str = "CURRENT-FAULT", severity: str = "Level 2") -> str:
     """
-    实际调用后端服务，根据DL模型结果和LLM诊断生成格式化PDF报告。
+    此工具用于根据DL模型结果和LLM诊断结果生成格式化的PDF故障诊断报告，并发送到运维中心。
     """
-    # 模拟实际操作，返回操作结果
-    return f"【工具调用成功】已自动生成并发送《{severity} 级诊断报告 ({fault_id})》至您的运维终端。同时已根据 RAG 知识库，建议检查电缆固定件。"
+    # 返回操作结果和下一步指导，让 LLM 组织语言
+    return f"【工具调用结果】诊断报告已成功生成，编号为 {fault_id}，级别：{severity}。已发送到岸基运维系统，请基于报告内容给出下一步维护建议。"
 
 def check_system_stability() -> str:
     """
     此工具用于查询船端边缘计算单元和船岸协同通信链路的实时状态和负载率。
     """
-    # 模拟查询系统状态，返回实时结果
+    # 模拟从系统API获取的实时数据
     return (
-        "**系统状态报告**：船端边缘计算单元负载率稳定在38%，模型推理延迟在15ms以内，**稳定性良好**。"
-        "船岸协同通信链路延迟低于50ms，状态稳定。"
+        "**系统状态数据**：船端边缘计算单元负载率为38%，模型推理延迟为15ms。船岸协同通信链路延迟低于50ms，状态稳定。"
     )
 
-# 将工具函数打包成字典
+# 将工具函数打包
 AVAILABLE_TOOLS = {
     "generate_diagnostic_report": generate_diagnostic_report,
     "check_system_stability": check_system_stability,
@@ -73,15 +70,15 @@ def dl_model_inference(data):
         return "运行正常 (安全)", 5.0
 
 
-# --- 3. 智能体核心逻辑（使用 Gemini API 替换）---
-@st.cache_resource # 缓存客户端，避免每次运行都重新初始化
+# --- 3. 智能体核心逻辑（完全依靠 Gemini 自主合成）---
+@st.cache_resource
 def get_gemini_client():
     """安全地获取 Gemini 客户端"""
     try:
         GEMINI_API_KEY = st.secrets["gemini_api_key"]
         return genai.Client(api_key=GEMINI_API_KEY)
     except KeyError:
-        st.error("无法找到 Gemini API 密钥。请在 Streamlit Cloud 的 Secrets 中配置 'gemini_api_key'。")
+        st.error("初始化失败：无法找到 Gemini API 密钥。请在 Streamlit Cloud 的 Secrets 中配置 'gemini_api_key'。")
         st.stop()
     except Exception as e:
         st.error(f"初始化 Gemini 客户端失败: {e}")
@@ -90,28 +87,30 @@ def get_gemini_client():
 def gemini_agent_response(user_query: str, current_status: str):
     client = get_gemini_client()
     
-    # 模拟 RAG 知识库和 Informer 预测结果（作为系统指令的输入）
-    RAG_AND_INFORME_CONTEXT = (
-        "【专业背景知识】:\n"
-        "1. **预测模型 (Informer)**：如果状态是一级预警，预测波形将呈现持续恶化的不规则高频震荡。\n"
-        "2. **诊断知识**：故障主要原因为高振动区域的电缆固定件老化松动。\n"
-        "3. **规范查询**：船级社规范[XX-2023]第5.4.1条要求：对于高振动区域的电气连接点，应每季度进行预防性检查。\n"
+    # *** RAG 知识事实：为 LLM 提供自主合成的基石 ***
+    GROUNDING_FACTS = (
+        "【RAG检索结果：船舶电气安全知识库精要】\n"
+        "--- 1. 预测与预警（基于 Informer 模型）---\n"
+        " - **一级预警特征**：电流波形走势将呈现持续恶化的不规则高频震荡，这是电弧在早期发展的明确信号。\n"
+        " - **处理建议**：如果当前状态为'一级预警'，应立即启动对该回路的检查程序，避免故障升级。\n"
+        "--- 2. 故障诊断（历史经验归因）---\n"
+        " - **根本原因**：该类串联故障电弧主要源于高振动区域的电缆连接点接触不良，如固定件老化松动。\n"
+        "--- 3. 维护规范（船级社要求）---\n"
+        " - **规范编号**：船级社规范[XX-2023]第5.4.1条。\n"
+        " - **维护要求**：对于高振动区域的关键电气连接点，必须每季度进行预防性检查和紧固维护。\n"
     )
 
     system_instruction = (
-        "你是一个专业的船舶电气安全智能体，请用严谨、专业的语气回复用户的提问。"
-        "你的回复必须基于DL模型的实时状态和提供的专业知识进行诊断和回复。"
-        "请尽可能利用提供的 Tool-Calling 能力来满足用户的需求，不要自己编造报告或系统状态。"
-        f"当前模型检测状态为：{current_status}。"
+        "你是一个专业的船舶电气安全智能体，负责实时监测、故障诊断和安全规范咨询。"
+        "你的回复必须**完全基于**你拥有的工具和提供的【RAG检索结果】中的信息进行推理和组织语言。"
+        "请使用**专业、严谨**的语气回复用户。当前模型检测状态为："
+        f"【实时状态】: {current_status}。"
     )
     
-    # 构建历史消息 (此处省略了完整的历史消息构建，仅发送当前 Prompt)
-    
-    # 合并 RAG 知识和用户提问
-    full_prompt = RAG_AND_INFORME_CONTEXT + "\n\n用户提问：" + user_query
+    # 将所有信息合并，作为 LLM 的上下文
+    full_prompt = system_instruction + "\n\n" + GROUNDING_FACTS + "\n\n用户提问：" + user_query
 
     try:
-        # 配置工具和系统指令
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
             tools=list(AVAILABLE_TOOLS.values()),
@@ -126,16 +125,15 @@ def gemini_agent_response(user_query: str, current_status: str):
         
         # 1. 处理 Tool-Calling
         if response.function_calls:
-            # Gemini 决定调用一个或多个工具
             for function_call in response.function_calls:
                 tool_name = function_call.name
                 tool_args = dict(function_call.args)
                 
                 if tool_name in AVAILABLE_TOOLS:
-                    # 执行本地工具函数
+                    # 执行本地工具函数获取数据
                     tool_result = AVAILABLE_TOOLS[tool_name](**tool_args)
                     
-                    # 第二次 API 调用：将工具执行结果反馈给 LLM
+                    # 第二次 API 调用：将工具执行结果反馈给 LLM，让其生成最终回复
                     response_after_tool = client.models.generate_content(
                         model='gemini-2.5-flash',
                         contents=[
@@ -145,14 +143,13 @@ def gemini_agent_response(user_query: str, current_status: str):
                         ],
                         config=types.GenerateContentConfig(system_instruction=system_instruction),
                     )
-                    return response_after_tool.text # 返回 LLM 基于工具结果的最终回复
+                    return response_after_tool.text 
                 
-        # 2. 返回 LLM 的标准文本回复
+        # 2. 返回 LLM 的标准文本回复（完全自主合成）
         return response.text
 
     except Exception as e:
-        # 捕获 API 错误，返回友好提示
-        return f"智能体 API 调用失败。请检查 Gemini API 密钥是否有效或网络连接。错误信息: {e}"
+        return f"智能体 API 调用失败。请检查密钥或网络连接。错误信息: {e}"
 
 
 # --- 4. 主界面（只需要替换调用函数）---
@@ -168,7 +165,7 @@ def main():
     if 't_start' not in st.session_state:
         st.session_state.t_start = time.time()
     
-    # 尝试初始化客户端，检查密钥
+    # 检查密钥和初始化客户端
     get_gemini_client() 
 
     col1, col2 = st.columns([3, 2])
@@ -216,6 +213,11 @@ def main():
         ax.set_ylim(-15, 15)
         st.pyplot(fig)
         plt.close(fig)
+        
+        # 循环刷新逻辑 (保持不变)
+        time.sleep(0.5) 
+        st.rerun()
+
 
     with col2:
         st.header("智能体交互中心 (岸基运维中心模拟)")
@@ -242,15 +244,16 @@ def main():
             with st.chat_message("assistant"):
                 current_status = status_text
                 
-                # *** 替换为新的 Gemini API 调用函数 ***
-                response = gemini_agent_response(prompt, current_status)
+                # *** 调用 Gemini API 进行生成 ***
+                with st.spinner("智能体正在进行诊断和推理..."):
+                     response = gemini_agent_response(prompt, current_status)
                 
                 # 模拟打字效果
                 full_response = ""
                 message_placeholder = st.empty()
                 for chunk in response.split():
                     full_response += chunk + " "
-                    time.sleep(0.01) # 略微减少延迟，因为 API 调用已有延迟
+                    time.sleep(0.01)
                     message_placeholder.markdown(full_response + "▌")
                 message_placeholder.markdown(full_response)
                 
