@@ -214,9 +214,42 @@ def main():
         st.pyplot(fig)
         plt.close(fig)
         
-        # 循环刷新逻辑 (保持不变)
-        # time.sleep(0.5) 
-        # st.rerun()
+        # ... (col1: Dashboard 部分) ...
+
+# 创建一个用于实时更新图表的占位符
+chart_placeholder = st.empty()
+
+while True: # 循环模拟实时更新
+    # 生成实时数据
+    t_series, current_data = simulate_current_data(
+        t=2000,
+        is_fault=st.session_state.is_fault_active,
+        prediction_mode=(time.time() - st.session_state.t_start < 20 and not st.session_state.is_fault_active)
+    )
+    status_text, confidence = dl_model_inference(current_data)
+
+    # 状态显示逻辑（略微复杂，需要使用占位符）
+    # 建议将状态显示也放入占位符，这里为了简化，省略
+
+    with chart_placeholder.container():
+        # 绘制波形图 (代码保持不变)
+        fig, ax = plt.subplots(figsize=(10, 4))
+        # ... (绘图代码) ...
+        st.pyplot(fig)
+        plt.close(fig)
+
+        # 绘制状态（需要重新绘制状态信息）
+        st.markdown(
+            f"**模型检测状态:** <span style='color:{color}; font-size: 20px;'>{status_text}</span> | **置信度:** {confidence:.1f}%",
+            unsafe_allow_html=True
+        )
+
+    # 控制更新频率
+    time.sleep(0.5) 
+
+    # 注意：这里不能调用 st.rerun()
+    # 但这会导致一个新问题：当用户在 col2 输入时，col1 的 while True 会阻塞
+    # 因此，**方案一才是 Streamlit 演示的最佳实践。**
 
 
     with col2:
