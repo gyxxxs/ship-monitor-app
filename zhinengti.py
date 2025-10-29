@@ -129,80 +129,47 @@ def get_gemini_client():
         st.error(f"初始化 Gemini 客户端失败: {e}")
         st.stop()
 
-def create_conversation_history(messages, max_history=6):
-    """创建对话历史上下文"""
-    history_parts = []
-    # 只取最近几次对话以控制上下文长度
-    for msg in messages[-(max_history*2):]:
-        if msg["role"] == "user":
-            history_parts.append(types.Part.from_text(f"用户: {msg['content']}"))
-        else:
-            history_parts.append(types.Part.from_text(f"助手: {msg['content']}"))
-    return history_parts
-
 def gemini_agent_response(user_query: str, system_status: dict, conversation_history: list):
     """完全基于Gemini生成自然对话的智能体"""
     client = get_gemini_client()
     
-    # 构建丰富的系统上下文
-    system_context = {
-        "current_status": {
-            "detection": system_status['detection_status'],
-            "confidence": system_status['confidence'],
-            "fault_type": system_status['fault_type'],
-            "circuit": system_status['circuit_id'],
-            "timestamp": system_status['timestamp']
-        },
-        "capabilities": {
-            "realtime_monitoring": "实时电流波形分析与故障检测",
-            "predictive_alert": "基于Informer网络的趋势预测", 
-            "expert_diagnosis": "结合历史案例和规范的智能诊断",
-            "maintenance_guidance": "自动化维护工单生成"
-        },
-        "knowledge_base": {
-            "standards": ["CCS规范第5.4.1条", "ABS规范第4-8-3条", "IEC 62606"],
-            "common_issues": ["电缆接头松动", "绝缘老化", "振动导致的接触不良"],
-            "maintenance_intervals": {"高振动区域": "季度检查", "一般区域": "半年检查"}
-        }
-    }
-    
+    # 构建系统指令
     system_instruction = f"""
-你是一个专业的船舶电气安全智能专家，具有丰富的船舶电力系统故障诊断经验。你的名字是"海安"，性格专业、细心且善于沟通。
+你是一个专业的船舶电气安全智能专家，名字是"海安"。请以专业、自然且友好的方式与用户对话。
 
 当前系统状态：
-- 监测回路：{system_context['current_status']['circuit']}
-- 检测状态：{system_context['current_status']['detection']}
-- 置信度：{system_context['current_status']['confidence']}%
-- 故障类型：{system_context['current_status']['fault_type']}
+- 监测回路：{system_status['circuit_id']}
+- 检测状态：{system_status['detection_status']}
+- 置信度：{system_status['confidence']}%
+- 故障类型：{system_status['fault_type']}
+- 更新时间：{system_status['timestamp']}
 
-请基于以上状态信息，以自然、专业且友好的方式与用户对话。注意：
-1. 根据检测状态调整语气：正常时轻松，预警时关切，故障时紧急但不慌乱
-2. 引用相关知识库内容时自然融入对话，不要生硬地列出条款
-3. 使用工具时，要解释为什么使用这个工具以及结果的意义
-4. 对于技术问题，既要专业准确又要通俗易懂
-5. 保持对话的连贯性和人性化，适当使用表情符号增强表达
+你的能力包括：
+1. 实时监测与故障诊断
+2. 趋势预测与预警
+3. 生成诊断报告
+4. 检查系统稳定性
+5. 创建维护工单
 
-可用工具：
-- generate_diagnostic_report: 生成详细诊断报告
-- check_system_stability: 检查系统运行状态  
-- generate_maintenance_order: 创建维护工单
+对话风格要求：
+- 专业但不过于技术化
+- 友好且乐于助人
+- 根据状态调整语气（正常时轻松，预警时关切，故障时紧急）
+- 自然引用相关知识，不要生硬列出条款
+- 使用工具时要解释其目的和结果意义
 
-请根据用户问题的性质，智能决定是否需要调用工具，并在回复中自然体现工具调用结果。
+请基于当前系统状态和用户问题，提供专业、有用的回答。
 """
     
     try:
-        # 构建完整的对话上下文
-        contents = []
+        # 构建对话历史
+        history_text = ""
+        for msg in conversation_history[-6:]:  # 只保留最近6轮对话
+            role = "用户" if msg["role"] == "user" else "助手"
+            history_text += f"{role}: {msg['content']}\n"
         
-        # 添加系统指令
-        contents.append(types.Part.from_text(system_instruction))
-        
-        # 添加对话历史
-        history_parts = create_conversation_history(conversation_history)
-        contents.extend(history_parts)
-        
-        # 添加当前用户问题
-        contents.append(types.Part.from_text(f"用户: {user_query}"))
+        # 构建完整的提示词
+        full_prompt = f"{system_instruction}\n\n对话历史：\n{history_text}\n用户: {user_query}\n助手:"
         
         config = types.GenerateContentConfig(
             tools=list(AVAILABLE_TOOLS.values()),
@@ -213,50 +180,57 @@ def gemini_agent_response(user_query: str, system_status: dict, conversation_his
             )
         )
         
-        # 生成初始响应
+        # 生成响应
         response = client.models.generate_content(
             model='gemini-2.0-flash-exp',
-            contents=contents,
+            contents=full_prompt,
             config=config,
         )
         
-        final_response = ""
-        tool_calls_made = False
-        
         # 处理工具调用
-        if response.function_calls:
-            tool_calls_made = True
-            for function_call in response.function_calls:
-                tool_name = function_call.name
-                tool_args = dict(function_call.args)
-                
-                if tool_name in AVAILABLE_TOOLS:
-                    # 执行工具调用
-                    tool_result = AVAILABLE_TOOLS[tool_name](**tool_args)
-                    
-                    # 基于工具结果生成最终回复
-                    tool_response = client.models.generate_content(
-                        model='gemini-2.0-flash-exp',
-                        contents=[
-                            types.Content(role="user", parts=[types.Part.from_text(system_instruction)]),
-                            types.Content(role="user", parts=[types.Part.from_text(f"用户问题: {user_query}")]),
-                            types.Content(role="model", parts=[types.Part.from_function_call(function_call)]),
-                            types.Content(role="tool", parts=[types.Part.from_text(f"工具执行结果: {tool_result}")]),
-                            types.Part.from_text("请基于工具执行结果，用自然专业的语言回复用户，解释工具结果的意义并给出建议。")
-                        ],
-                    )
-                    final_response = tool_response.text
-                else:
-                    final_response = "抱歉，我暂时无法处理这个请求。请尝试其他问题。"
-        
-        # 如果没有工具调用，使用原始响应
-        if not tool_calls_made:
-            final_response = response.text
-            
-        return final_response
+        if hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'content') and candidate.content:
+                # 检查是否有工具调用
+                if hasattr(candidate.content, 'parts'):
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'function_call'):
+                            function_call = part.function_call
+                            tool_name = function_call.name
+                            tool_args = dict(function_call.args)
+                            
+                            if tool_name in AVAILABLE_TOOLS:
+                                # 执行工具调用
+                                tool_result = AVAILABLE_TOOLS[tool_name](**tool_args)
+                                
+                                # 基于工具结果生成最终回复
+                                tool_prompt = f"""
+系统状态：{system_status}
+用户问题：{user_query}
+工具执行结果：{tool_result}
 
+请基于工具执行结果，用自然专业的语言回复用户，解释工具结果的意义并给出建议。
+"""
+                                tool_response = client.models.generate_content(
+                                    model='gemini-2.0-flash-exp',
+                                    contents=tool_prompt,
+                                )
+                                return tool_response.text
+                
+                # 如果没有工具调用，返回文本响应
+                if hasattr(candidate.content, 'parts'):
+                    text_parts = []
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'text') and part.text:
+                            text_parts.append(part.text)
+                    if text_parts:
+                        return "".join(text_parts)
+        
+        # 如果上述方法都不行，使用简单方法
+        return str(response.text) if hasattr(response, 'text') else "我暂时无法处理这个请求，请稍后重试。"
+        
     except Exception as e:
-        return f"抱歉，我在处理您的请求时遇到了问题。请稍后重试。错误信息: {str(e)}"
+        return f"抱歉，我在处理您的请求时遇到了技术问题。错误信息: {str(e)}"
 
 # --- 4. 主界面 ---
 def main():
@@ -443,7 +417,7 @@ def main():
                 for char in response:
                     full_response += char
                     message_placeholder.markdown(full_response + "▌")
-                    time.sleep(0.005)  # 更快的输出速度
+                    time.sleep(0.005)
                 message_placeholder.markdown(full_response)
                 
             st.session_state.messages.append({"role": "assistant", "content": response})
