@@ -141,7 +141,7 @@ def get_gemini_client():
         st.stop()
 
 def gemini_agent_response(user_query: str, system_status: dict):
-    """增强的智能体响应函数"""
+    """增强的智能体响应函数 - 支持工具调用失败时的自主回答"""
     client = get_gemini_client()
     
     # 构建系统状态上下文
@@ -169,8 +169,9 @@ def gemini_agent_response(user_query: str, system_status: dict):
 
     system_instruction = (
         "你是一个专业的船舶电气安全智能体，基于船岸协同架构工作。"
-        "你必须结合实时系统状态、RAG知识库和可用工具来提供准确的诊断和建议。"
-        "对于预警信息，要明确说明风险等级和应对措施；对于故障诊断，要引用相关规范条款。"
+        "你具备船舶电气安全的专业知识，同时也可以回答一般性问题。"
+        "优先使用可用工具处理专业问题，对于工具无法处理的问题，请基于你的知识自主回答。"
+        "回答要专业、准确、有帮助。"
         f"当前系统状态：{status_context}"
     )
     
@@ -188,29 +189,63 @@ def gemini_agent_response(user_query: str, system_status: dict):
             config=config,
         )
         
+        # 检查是否有工具调用
+        tool_called = False
         if response.function_calls:
             for function_call in response.function_calls:
                 tool_name = function_call.name
                 tool_args = dict(function_call.args)
                 
                 if tool_name in AVAILABLE_TOOLS:
-                    tool_result = AVAILABLE_TOOLS[tool_name](**tool_args)
-                    
-                    response_after_tool = client.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=[
-                            types.Content(role="user", parts=[types.Part.from_text(full_prompt)]),
-                            types.Content(role="model", parts=[types.Part.from_function_call(function_call)]),
-                            types.Content(role="tool", parts=[types.Part.from_text(tool_result)]),
-                        ],
-                        config=types.GenerateContentConfig(system_instruction=system_instruction),
-                    )
-                    return response_after_tool.text 
-                
+                    tool_called = True
+                    try:
+                        # 执行工具调用
+                        tool_result = AVAILABLE_TOOLS[tool_name](**tool_args)
+                        
+                        # 使用工具结果生成最终响应
+                        response_after_tool = client.models.generate_content(
+                            model='gemini-2.5-flash',
+                            contents=[
+                                types.Content(role="user", parts=[types.Part.from_text(full_prompt)]),
+                                types.Content(role="model", parts=[types.Part.from_function_call(function_call)]),
+                                types.Content(role="tool", parts=[types.Part.from_text(tool_result)]),
+                            ],
+                            config=types.GenerateContentConfig(system_instruction=system_instruction),
+                        )
+                        return response_after_tool.text
+                    except Exception as tool_error:
+                        # 工具执行失败，记录错误但继续使用自主回答
+                        st.warning(f"工具 {tool_name} 执行失败: {tool_error}")
+                        # 继续执行下面的自主回答逻辑
+        
+        # 如果没有工具调用或工具调用失败，使用模型的自主回答
+        if not tool_called:
+            # 直接返回模型的原始响应
+            return response.text
+            
+        # 如果工具调用失败但已经尝试过工具，返回原始响应作为降级方案
         return response.text
 
     except Exception as e:
-        return f"智能体 API 调用失败。错误信息: {e}"
+        # 完整的错误处理
+        error_msg = f"智能体 API 调用失败。错误信息: {e}"
+        st.error(error_msg)
+        
+        # 提供降级响应
+        fallback_responses = {
+            "greeting": "您好！我是船舶电气安全助手。当前系统连接有些问题，但我可以告诉您：我能帮助分析故障预警、生成诊断报告和维护工单。",
+            "status": f"当前监测状态：{system_status['detection_status']}，置信度：{system_status['confidence']}%。由于系统暂时性问题，无法获取详细信息。",
+            "general": "抱歉，当前系统暂时无法处理您的请求。请检查网络连接或稍后重试。对于船舶电气安全问题，通常建议检查电缆连接紧固性和绝缘状态。"
+        }
+        
+        # 简单的关键词匹配降级响应
+        user_query_lower = user_query.lower()
+        if any(word in user_query_lower for word in ['你好', '您好', 'hello', 'hi']):
+            return fallback_responses['greeting']
+        elif any(word in user_query_lower for word in ['状态', '检测', '预警', '故障']):
+            return fallback_responses['status']
+        else:
+            return fallback_responses['general']
 
 # --- 4. 主界面 ---
 def main():
