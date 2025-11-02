@@ -10,8 +10,8 @@ from pydantic import BaseModel, Field
 import json
 
 # --- matplotlib 中文字体配置 ---
-plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans', 'Arial Unicode MS', 'Microsoft YaHei']
-plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+plt.rcParams['font.sans-serif'] = ['WenQuanYi Zen Hei', 'WenQuanYi Micro Hei', 'DejaVu Sans']
+plt.rcParams['axes.unicode_minus'] = False
 
 # --- 0. 环境和工具定义 ---
 
