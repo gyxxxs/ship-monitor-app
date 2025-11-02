@@ -351,10 +351,10 @@ def main():
         
         # 波形图
         fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(t_series, current_data, label='电流波形 (A)', color=color, linewidth=1)
-        ax.set_title(f"实时电流波形监测 - {st.session_state.circuit_id}")
-        ax.set_xlabel("时间 (ms)")
-        ax.set_ylabel("电流 (A)")
+        ax.plot(t_series, current_data, label='Current-waveform(A)', color=color, linewidth=1)
+        ax.set_title(f"Real-time current waveform monitoring - {st.session_state.circuit_id}")
+        ax.set_xlabel("Time(ms)")
+        ax.set_ylabel("Current(A)")
         ax.grid(True, linestyle='--', alpha=0.6)
         ax.set_ylim(-20, 20)
         ax.legend()
