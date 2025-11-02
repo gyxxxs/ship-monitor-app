@@ -9,28 +9,26 @@ from google.genai import types
 from pydantic import BaseModel, Field
 import json
 
+# --- matplotlib 中文字体配置 ---
+plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans', 'Arial Unicode MS', 'Microsoft YaHei']
+plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
 
-font_path = 'C:\\Windows\\Fonts\\SimHei.ttf'  # Windows路径
-font = font_manager.FontProperties(fname=font_path)
-
-# 配置 Matplotlib 默认字体
-plt.rcParams['font.family'] = font.get_name()
 # --- 0. 环境和工具定义 ---
 
 class ReportInput(BaseModel):
     """用于生成详细故障诊断报告的工具"""
-    fault_id: str = Field(description="当前故障事件的唯一标识ID，例如：'EVENT-20251028-001'")
-    severity: str = Field(description="故障的严重程度，例如：'一级预警'或'二级预警'")
-    fault_type: str = Field(description="故障类型，如：'串联电弧故障'、'绝缘老化'等")
+    fault_id: str = Field(description="当前故障事件的唯一标识ID,例如:'EVENT-20251028-001'")
+    severity: str = Field(description="故障的严重程度,例如:'一级预警'或'二级预警'")
+    fault_type: str = Field(description="故障类型,如:'串联电弧故障'、'绝缘老化'等")
 
 class StabilityInput(BaseModel):
     """用于查询船端边缘计算单元和船岸协同通信链路的实时状态和负载率"""
 
 class MaintenanceInput(BaseModel):
     """根据故障类型生成维护工单"""
-    circuit_id: str = Field(description="回路编号，例如：'03号舱回路'")
+    circuit_id: str = Field(description="回路编号,例如:'03号舱回路'")
     fault_severity: str = Field(description="故障严重程度")
-    maintenance_type: str = Field(description="维护类型：预防性/紧急")
+    maintenance_type: str = Field(description="维护类型:预防性/紧急")
 
 def generate_diagnostic_report(fault_id: str, severity: str, fault_type: str) -> str:
     """生成格式化的故障诊断报告"""
@@ -42,7 +40,7 @@ def generate_diagnostic_report(fault_id: str, severity: str, fault_type: str) ->
         "fault_type": fault_type,
         "dl_confidence": "97.5%",
         "root_cause": "高振动区域电缆固定件老化松动导致的串联电弧故障",
-        "maintenance_advice": "立即进行预防性检查，紧固连接件，参考CCS规范第5.4.1条",
+        "maintenance_advice": "立即进行预防性检查,紧固连接件,参考CCS规范第5.4.1条",
         "risk_level": "高" if "二级" in severity else "中"
     }
     return f"【诊断报告】{json.dumps(report_data, ensure_ascii=False, indent=2)}"
@@ -67,7 +65,7 @@ def generate_maintenance_order(circuit_id: str, fault_severity: str, maintenance
         "priority": "紧急" if "二级" in fault_severity else "高",
         "required_tools": "红外热像仪,力矩扳手,绝缘测试仪",
         "estimated_duration": "2小时",
-        "safety_requirements": "断电操作，穿戴PPE"
+        "safety_requirements": "断电操作,穿戴PPE"
     }
     return f"【维护工单】{json.dumps(order_data, ensure_ascii=False)}"
 
@@ -91,13 +89,13 @@ def simulate_current_data(t, fault_scenario="normal", prediction_mode=False):
     current += np.random.normal(0, 0.05, t)
     
     if fault_scenario == "early_arc":
-        # 早期电弧特征：间歇性高频噪声
+        # 早期电弧特征:间歇性高频噪声
         mask = (time_series % 0.1 < 0.02)  # 10%时间出现电弧
         high_freq = np.sin(2 * np.pi * 5000 * time_series) * 0.3
         current += high_freq * mask
         
     elif fault_scenario == "severe_arc":
-        # 严重电弧特征：持续高频噪声+幅值变化
+        # 严重电弧特征:持续高频噪声+幅值变化
         high_freq = np.sin(2 * np.pi * 3000 * time_series) * 0.8
         current += high_freq + 2 * np.random.rand(t)
         
@@ -141,7 +139,7 @@ def get_gemini_client():
         GEMINI_API_KEY = st.secrets["gemini_api_key"]
         return genai.Client(api_key=GEMINI_API_KEY)
     except KeyError:
-        st.error("初始化失败：无法找到 Gemini API 密钥。请在 Streamlit Cloud 的 Secrets 中配置 'gemini_api_key'。")
+        st.error("初始化失败:无法找到 Gemini API 密钥。请在 Streamlit Cloud 的 Secrets 中配置 'gemini_api_key'。")
         st.stop()
     except Exception as e:
         st.error(f"初始化 Gemini 客户端失败: {e}")
@@ -162,27 +160,27 @@ def gemini_agent_response(user_query: str, system_status: dict):
     )
     
     GROUNDING_FACTS = (
-        "【RAG检索结果：船舶电气安全知识库精要】\n"
-        "--- 1. 预测与预警（基于 Informer 模型）---\n"
-        " - **一级预警特征**：电流波形呈现不规则高频震荡（1-5kHz），幅值变化±15%，这是早期电弧的明确信号。\n"
-        " - **二级预警特征**：持续高频噪声（3-8kHz），电流幅值异常波动超过±30%，需立即处理。\n"
-        "--- 2. 故障诊断（历史经验归因）---\n"
-        " - **根本原因**：80%的船舶电弧故障源于高振动区域的电缆连接点接触不良。\n"
-        " - **典型位置**：机舱、货舱泵区、甲板机械供电回路。\n"
-        "--- 3. 维护规范（船级社要求）---\n"
-        " - **CCS规范第5.4.1条**：高振动区域每季度必须进行预防性检查和紧固维护。\n"
-        " - **ABS规范第4-8-3条**：检测到电弧故障后，需在24小时内完成根本原因分析。\n"
+        "【RAG检索结果:船舶电气安全知识库精要】\n"
+        "--- 1. 预测与预警(基于 Informer 模型)---\n"
+        " - **一级预警特征**:电流波形呈现不规则高频震荡(1-5kHz),幅值变化±15%,这是早期电弧的明确信号。\n"
+        " - **二级预警特征**:持续高频噪声(3-8kHz),电流幅值异常波动超过±30%,需立即处理。\n"
+        "--- 2. 故障诊断(历史经验归因)---\n"
+        " - **根本原因**:80%的船舶电弧故障源于高振动区域的电缆连接点接触不良。\n"
+        " - **典型位置**:机舱、货舱泵区、甲板机械供电回路。\n"
+        "--- 3. 维护规范(船级社要求)---\n"
+        " - **CCS规范第5.4.1条**:高振动区域每季度必须进行预防性检查和紧固维护。\n"
+        " - **ABS规范第4-8-3条**:检测到电弧故障后,需在24小时内完成根本原因分析。\n"
     )
 
     system_instruction = (
-        "你是一个专业的船舶电气安全智能体，基于船岸协同架构工作。"
-        "你具备船舶电气安全的专业知识，同时也可以回答一般性问题。"
-        "优先使用可用工具处理专业问题，对于工具无法处理的问题，请基于你的知识自主回答。"
+        "你是一个专业的船舶电气安全智能体,基于船岸协同架构工作。"
+        "你具备船舶电气安全的专业知识,同时也可以回答一般性问题。"
+        "优先使用可用工具处理专业问题,对于工具无法处理的问题,请基于你的知识自主回答。"
         "回答要专业、准确、有帮助。"
-        f"当前系统状态：{status_context}"
+        f"当前系统状态:{status_context}"
     )
     
-    full_prompt = system_instruction + "\n\n" + GROUNDING_FACTS + "\n\n用户提问：" + user_query
+    full_prompt = system_instruction + "\n\n" + GROUNDING_FACTS + "\n\n用户提问:" + user_query
 
     try:
         config = types.GenerateContentConfig(
@@ -221,16 +219,16 @@ def gemini_agent_response(user_query: str, system_status: dict):
                         )
                         return response_after_tool.text
                     except Exception as tool_error:
-                        # 工具执行失败，记录错误但继续使用自主回答
+                        # 工具执行失败,记录错误但继续使用自主回答
                         st.warning(f"工具 {tool_name} 执行失败: {tool_error}")
                         # 继续执行下面的自主回答逻辑
         
-        # 如果没有工具调用或工具调用失败，使用模型的自主回答
+        # 如果没有工具调用或工具调用失败,使用模型的自主回答
         if not tool_called:
             # 直接返回模型的原始响应
             return response.text
             
-        # 如果工具调用失败但已经尝试过工具，返回原始响应作为降级方案
+        # 如果工具调用失败但已经尝试过工具,返回原始响应作为降级方案
         return response.text
 
     except Exception as e:
@@ -240,9 +238,9 @@ def gemini_agent_response(user_query: str, system_status: dict):
         
         # 提供降级响应
         fallback_responses = {
-            "greeting": "您好！我是船舶电气安全助手。当前系统连接有些问题，但我可以告诉您：我能帮助分析故障预警、生成诊断报告和维护工单。",
-            "status": f"当前监测状态：{system_status['detection_status']}，置信度：{system_status['confidence']}%。由于系统暂时性问题，无法获取详细信息。",
-            "general": "抱歉，当前系统暂时无法处理您的请求。请检查网络连接或稍后重试。对于船舶电气安全问题，通常建议检查电缆连接紧固性和绝缘状态。"
+            "greeting": "您好!我是船舶电气安全助手。当前系统连接有些问题,但我可以告诉您:我能帮助分析故障预警、生成诊断报告和维护工单。",
+            "status": f"当前监测状态:{system_status['detection_status']},置信度:{system_status['confidence']}%。由于系统暂时性问题,无法获取详细信息。",
+            "general": "抱歉,当前系统暂时无法处理您的请求。请检查网络连接或稍后重试。对于船舶电气安全问题,通常建议检查电缆连接紧固性和绝缘状态。"
         }
         
         # 简单的关键词匹配降级响应
@@ -363,9 +361,9 @@ def main():
         st.pyplot(fig)
         plt.close(fig)
         
-        # 频谱分析（简化版）
+        # 频谱分析(简化版)
         if "预警" in status_text:
-            st.warning("🔍 检测到高频噪声成分，建议进行详细频谱分析")
+            st.warning("🔍 检测到高频噪声成分,建议进行详细频谱分析")
 
     with col2:
         st.header("💬 智能体交互中心")
@@ -378,9 +376,9 @@ def main():
         # 预设问题
         st.subheader("💡 预设问题")
         presets = {
-            "前瞻预警": "当前波形走势是否正常？有无潜在的电弧风险？",
+            "前瞻预警": "当前波形走势是否正常?有无潜在的电弧风险?",
             "诊断查询": "请分析故障根本原因和船级社维护要求",
-            "系统状态": "边缘计算单元和通信链路状态如何？",
+            "系统状态": "边缘计算单元和通信链路状态如何?",
             "维护指导": "根据当前预警生成维护工单"
         }
         
