@@ -352,7 +352,7 @@ def main():
         # 波形图
         fig, ax = plt.subplots(figsize=(10, 4))
         ax.plot(t_series, current_data, label='Current-waveform(A)', color=color, linewidth=1)
-        ax.set_title(f"Real-time current waveform monitoring - {st.session_state.circuit_id}")
+        ax.set_title(f"Real-time current waveform monitoring ")
         ax.set_xlabel("Time(ms)")
         ax.set_ylabel("Current(A)")
         ax.grid(True, linestyle='--', alpha=0.6)
