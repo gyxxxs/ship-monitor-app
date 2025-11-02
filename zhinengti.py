@@ -1,6 +1,7 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 import time
 from datetime import datetime
 from google import genai
@@ -8,6 +9,12 @@ from google.genai import types
 from pydantic import BaseModel, Field
 import json
 
+
+font_path = 'C:\\Windows\\Fonts\\SimHei.ttf'  # Windows路径
+font = font_manager.FontProperties(fname=font_path)
+
+# 配置 Matplotlib 默认字体
+plt.rcParams['font.family'] = font.get_name()
 # --- 0. 环境和工具定义 ---
 
 class ReportInput(BaseModel):
