@@ -186,7 +186,12 @@ def gemini_agent_response(user_query: str, system_status: dict):
         "回答要专业、准确、有帮助。"
     )
     
-    full_prompt = system_instruction + "\n\n" + GROUNDING_FACTS + "\n\n用户提问:" + user_query
+    full_prompt = (
+        system_instruction + 
+        "\n\n" + GROUNDING_FACTS + 
+        "\n\n" + status_context +  # 显式加入实时状态上下文
+        "\n\n用户提问:" + user_query
+    )
 
     try:
         config = types.GenerateContentConfig(
