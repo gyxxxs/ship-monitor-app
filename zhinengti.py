@@ -10,11 +10,10 @@ from pydantic import BaseModel, Field
 import json
 
 # --- matplotlib 中文字体配置 ---
-# 确保Streamlit环境支持此字体，否则可能回退到默认
 plt.rcParams['font.sans-serif'] = ['WenQuanYi Zen Hei', 'WenQuanYi Micro Hei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
-# --- 0. 环境和工具定义 ---
+# --- 0. 环境和工具定义 (保持不变) ---
 
 class ReportInput(BaseModel):
     """用于生成详细故障诊断报告的工具"""
@@ -76,7 +75,7 @@ AVAILABLE_TOOLS = {
     "generate_maintenance_order": generate_maintenance_order,
 }
 
-# --- 1. 增强的数据模拟 ---
+# --- 1. 增强的数据模拟 (保持不变) ---
 def simulate_current_data(t, fault_scenario="normal", prediction_mode=False):
     """
     模拟更真实的船舶电流数据
@@ -117,7 +116,7 @@ def simulate_current_data(t, fault_scenario="normal", prediction_mode=False):
 
     return time_series * 1000, current
 
-# --- 2. 增强的模型推理模拟 ---
+# --- 2. 增强的模型推理模拟 (保持不变) ---
 def dl_model_inference(data, fault_scenario):
     """模拟双重深度学习引擎的推理结果"""
     
@@ -149,20 +148,23 @@ def dl_model_inference(data, fault_scenario):
 def get_gemini_client():
     """安全地获取 Gemini 客户端"""
     try:
-        # 假设用户已配置 st.secrets["gemini_api_key"]
         if "gemini_api_key" not in st.secrets:
-            st.error("初始化失败:无法找到 Gemini API 密钥。请在 Streamlit Cloud 的 Secrets 中配置 'gemini_api_key'。")
-            st.stop()
+            # 仅在 Streamlit 运行时显示，方便调试
+            return None 
         GEMINI_API_KEY = st.secrets["gemini_api_key"]
         return genai.Client(api_key=GEMINI_API_KEY)
     except Exception as e:
+        # 仅在 Streamlit 运行时显示，方便调试
         st.error(f"初始化 Gemini 客户端失败: {e}")
-        st.stop()
+        return None
 
 def gemini_agent_response(user_query: str, system_status: dict):
-    """增强的智能体响应函数 - 支持工具调用失败时的自主回答"""
+    """增强的智能体响应函数"""
     client = get_gemini_client()
     
+    if client is None:
+        return "⚠️ Gemini 客户端未初始化（可能缺少 API Key），无法执行 AI 推理。请检查配置。"
+        
     # 构建系统状态上下文
     status_context = (
         f"【实时系统状态】\n"
@@ -217,8 +219,7 @@ def gemini_agent_response(user_query: str, system_status: dict):
             
             if tool_name in AVAILABLE_TOOLS:
                 
-                # *** 关键：处理 generate_diagnostic_report/generate_maintenance_order 工具参数 ***
-                # 确保工具参数中的 severity/fault_type 使用了最新的系统状态
+                # 关键：确保工具参数使用最新的系统状态
                 if tool_name == "generate_diagnostic_report":
                     tool_args['severity'] = system_status['detection_status']
                     tool_args['fault_type'] = system_status['fault_type']
@@ -226,7 +227,6 @@ def gemini_agent_response(user_query: str, system_status: dict):
                 elif tool_name == "generate_maintenance_order":
                     tool_args['fault_severity'] = system_status['detection_status']
                     tool_args['circuit_id'] = system_status['circuit_id']
-                    # 简化逻辑，根据预警等级判断维护类型
                     tool_args['maintenance_type'] = "紧急" if "二级" in system_status['detection_status'] else "预防性"
                 
                 
@@ -247,17 +247,16 @@ def gemini_agent_response(user_query: str, system_status: dict):
                     return response_after_tool.text
                 except Exception as tool_error:
                     st.warning(f"工具 {tool_name} 执行失败: {tool_error}")
-                    # 降级：让模型尝试自主回答
-                    pass # 跳过，继续返回原始响应
+                    pass 
 
         # 如果没有工具调用或工具调用失败，使用模型的自主回答
         return response.text
 
     except Exception as e:
+        # 完整的错误处理及降级响应
         error_msg = f"智能体 API 调用失败。错误信息: {e}"
         st.error(error_msg)
         
-        # 简单的关键词匹配降级响应
         fallback_responses = {
             "greeting": "您好!我是船舶电气安全助手。当前系统连接有些问题,但我能帮助分析故障预警、生成诊断报告和维护工单。",
             "status": f"当前监测状态:{system_status['detection_status']},置信度:{system_status['confidence']:.1f}%。由于系统暂时性问题,无法获取详细信息。",
@@ -288,12 +287,12 @@ def main():
     if 'last_update' not in st.session_state:
         st.session_state.last_update = time.time()
     if 'early_arc_confidence' not in st.session_state:
-        st.session_state.early_arc_confidence = 70.0 # 用于模拟早期预警置信度逐渐升高
+        st.session_state.early_arc_confidence = 70.0 
 
     # 检查密钥
     get_gemini_client()
 
-    # 侧边栏 - 系统配置
+    # 侧边栏 - 系统配置 (保持不变)
     with st.sidebar:
         st.header("系统配置")
         st.session_state.circuit_id = st.selectbox(
@@ -313,9 +312,9 @@ def main():
             "严重电弧故障": "severe_arc",
             "电机启动干扰": "motor_start"
         }
+        # 当侧边栏变化时，Streamlit 会自动 Rerun，更新 st.session_state.fault_scenario
         st.session_state.fault_scenario = scenario_map[scenario]
         
-        # 系统信息
         st.subheader("系统信息")
         st.info("""
         **架构层级:**
@@ -326,101 +325,82 @@ def main():
 
     col1, col2 = st.columns([3, 2])
 
-    # --- 实时监测 Dashboard (动态更新) ---
+    # --- 实时监测 Dashboard (单次执行，依靠 Rerun 刷新) ---
     with col1:
         st.header("📊 实时监测 Dashboard")
         
-        # 创建占位符用于动态更新
-        status_placeholder = st.empty()
-        confidence_placeholder = st.empty()
-        circuit_placeholder = st.empty()
-        graph_placeholder = st.empty()
-        warning_placeholder = st.empty()
+        # 实时数据生成 (每次 Rerun 都生成新数据)
+        t_series, current_data = simulate_current_data(
+            t=4000, 
+            fault_scenario=st.session_state.fault_scenario,
+            prediction_mode=(st.session_state.fault_scenario == "early_arc")
+        )
         
-        # 实时更新循环
-        while True:
-            # 实时数据生成
-            t_series, current_data = simulate_current_data(
-                t=4000, 
-                fault_scenario=st.session_state.fault_scenario,
-                prediction_mode=(st.session_state.fault_scenario == "early_arc")
-            )
-            
-            # 模型推理
-            status_text, confidence, fault_type = dl_model_inference(
-                current_data, st.session_state.fault_scenario
-            )
-            
-            # 系统状态
-            system_status = {
-                "detection_status": status_text,
-                "confidence": confidence,
-                "fault_type": fault_type,
-                "circuit_id": st.session_state.circuit_id,
-                "timestamp": datetime.now().strftime("%H:%M:%S")
-            }
-            
-            # 状态颜色映射
-            status_color = {
-                "运行正常": "green",
-                "干扰信号": "blue", 
-                "一级预警": "orange",
-                "二级预警": "red"
-            }
-            
-            color = "green"
-            for key, value in status_color.items():
-                if key in status_text:
-                    color = value
-                    break
-            
-            # 1. 更新状态显示
-            with status_placeholder.container():
-                st.markdown(
-                    f"**检测状态:** <span style='color:{color}; font-size: 24px;'>{status_text}</span>",
-                    unsafe_allow_html=True
-                )
-            
-            # 2. 更新 Metric
-            with confidence_placeholder.container():
-                 st.metric("模型置信度", f"{confidence:.1f}%")
-            
-            with circuit_placeholder.container():
-                 st.metric("监测回路", st.session_state.circuit_id)
+        # 模型推理
+        status_text, confidence, fault_type = dl_model_inference(
+            current_data, st.session_state.fault_scenario
+        )
+        
+        # 系统状态
+        system_status = {
+            "detection_status": status_text,
+            "confidence": confidence,
+            "fault_type": fault_type,
+            "circuit_id": st.session_state.circuit_id,
+            "timestamp": datetime.now().strftime("%H:%M:%S")
+        }
+        
+        # 状态颜色映射
+        status_color = {
+            "运行正常": "green",
+            "干扰信号": "blue", 
+            "一级预警": "orange",
+            "二级预警": "red"
+        }
+        
+        color = "green"
+        for key, value in status_color.items():
+            if key in status_text:
+                color = value
+                break
+        
+        # 1. 状态显示
+        st.markdown(
+            f"**检测状态:** <span style='color:{color}; font-size: 24px;'>{status_text}</span>",
+            unsafe_allow_html=True
+        )
+        
+        # 2. Metric
+        st.metric("模型置信度", f"{confidence:.1f}%")
+        st.metric("监测回路", st.session_state.circuit_id)
 
 
-            # 3. 更新波形图
-            with graph_placeholder.container():
-                fig, ax = plt.subplots(figsize=(10, 4))
-                ax.plot(t_series, current_data, label=f'Current Waveform (A) @ {system_status["timestamp"]}', color=color, linewidth=1)
-                ax.set_title(f"{st.session_state.circuit_id} Real-time current waveform monitoring ")
-                ax.set_xlabel("Time(ms)")
-                ax.set_ylabel("Current(A)")
-                ax.grid(True, linestyle='--', alpha=0.6)
-                ax.set_ylim(-20, 20)
-                ax.legend(loc='upper right')
-                
-                # 在早期预警模式下，添加预测趋势线（模拟 Informer 预测结果）
-                if st.session_state.fault_scenario == "early_arc":
-                    ax.plot(t_series, current_data + 2, label='Informer Predicted Risk Trend', color='purple', linestyle='--', alpha=0.7)
-                    ax.legend(loc='upper right')
-                
-                st.pyplot(fig)
-                plt.close(fig)
-            
-            # 4. 更新预警/提示信息
-            with warning_placeholder.container():
-                if "预警" in status_text:
-                    st.warning(f"🚨 **{status_text}** - 模型置信度 {confidence:.1f}%，请立即启动智能体进行诊断!")
-                elif "干扰" in status_text:
-                    st.info("ℹ️ **干扰信号** - 检测到瞬时高频，判断为电机启动，请持续监测。")
-                else:
-                    st.success("✅ **运行正常** - 系统稳定，故障率低。")
-            
-            # 5. 暂停以实现动态效果
-            time.sleep(0.5)
+        # 3. 波形图
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(t_series, current_data, label=f'Current Waveform (A) @ {system_status["timestamp"]}', color=color, linewidth=1)
+        ax.set_title(f"{st.session_state.circuit_id} Real-time current waveform monitoring ")
+        ax.set_xlabel("Time(ms)")
+        ax.set_ylabel("Current(A)")
+        ax.grid(True, linestyle='--', alpha=0.6)
+        ax.set_ylim(-20, 20)
+        ax.legend(loc='upper right')
+        
+        if st.session_state.fault_scenario == "early_arc":
+            ax.plot(t_series, current_data + 2, label='Informer Predicted Risk Trend', color='purple', linestyle='--', alpha=0.7)
+            ax.legend(loc='upper right')
+        
+        st.pyplot(fig)
+        plt.close(fig)
+        
+        # 4. 预警/提示信息
+        if "预警" in status_text:
+            st.warning(f"🚨 **{status_text}** - 模型置信度 {confidence:.1f}%，请立即启动智能体进行诊断!")
+        elif "干扰" in status_text:
+            st.info("ℹ️ **干扰信号** - 检测到瞬时高频，判断为电机启动，请持续监测。")
+        else:
+            st.success("✅ **运行正常** - 系统稳定，故障率低。")
 
-    # --- 智能体交互中心 (与原代码保持一致) ---
+    # --- 智能体交互中心 (恢复交互) ---
     with col2:
         st.header("💬 智能体交互中心")
         
@@ -438,11 +418,41 @@ def main():
             "维护指导": "根据当前预警生成维护工单"
         }
         
-        # 注意：此处不能直接使用 st.rerun()，因为需要保持循环运行
-        # 故将交互逻辑移至 input/button 之外，确保在循环外触发
+        # 使用列布局来优化按钮显示
+        preset_cols = st.columns(2)
+        
+        # 处理预设按钮的点击
+        for i, (preset_name, preset_text) in enumerate(presets.items()):
+            col = preset_cols[i % 2]
+            if col.button(f"{preset_name}", key=preset_name):
+                # 保存用户消息
+                st.session_state.messages.append({"role": "user", "content": preset_text})
+                
+                # 在本次 Rerun 中立即显示用户消息
+                with st.chat_message("user"):
+                    st.markdown(preset_text)
+
+                # 生成智能体响应
+                with st.chat_message("assistant"):
+                    with st.spinner("智能体推理中..."):
+                        response = gemini_agent_response(preset_text, system_status)
+                    
+                    # 模拟打字效果
+                    full_response = ""
+                    message_placeholder = st.empty()
+                    for chunk in response.split():
+                        full_response += chunk + " "
+                        time.sleep(0.01)
+                        message_placeholder.markdown(full_response + "▌")
+                    message_placeholder.markdown(full_response)
+                        
+                # 保存智能体响应
+                st.session_state.messages.append({"role": "assistant", "content": response})
+                
+                # 强制 Rerun 以确保界面和状态完全同步
+                st.rerun()
         
         # 聊天输入
-        # Streamlit 的聊天输入框天然在循环外，且触发时会rerun
         if prompt := st.chat_input("请输入您的问题..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
@@ -450,9 +460,9 @@ def main():
 
             with st.chat_message("assistant"):
                 with st.spinner("智能体推理中..."):
-                    # 使用最新的系统状态进行推理
-                    response = gemini_agent_response(prompt, system_status) 
+                    response = gemini_agent_response(prompt, system_status)
                 
+                # 模拟打字效果
                 full_response = ""
                 message_placeholder = st.empty()
                 for chunk in response.split():
@@ -462,45 +472,17 @@ def main():
                 message_placeholder.markdown(full_response)
                 
             st.session_state.messages.append({"role": "assistant", "content": response})
-            # st.rerun() # 在 while 循环中不使用 rerun
+            st.rerun()
             
-        # 处理预设按钮的点击（此处的逻辑不能直接在循环内触发 rerun）
-        # 最佳实践是让按钮点击后更新 session_state，然后由主循环（在本次更新结束后）或用户输入触发更新。
-        # 由于 Streamlit 的机制，将预设按钮逻辑和 chat_input 放在一起，可以被 chat_input 的 rerun 机制捕获。
-        
-        # 在此处，我们仅在主循环外部放置一个触发按钮的逻辑，但 Streamlit 的限制使这个处理变得复杂。
-        # 暂时保持原有的 button 逻辑，因为它依赖于 st.rerun()，这与 while True 循环是冲突的。
-        # 为了兼容 while True 循环，我们暂时移除 st.rerun()，但请注意，在实际部署时，**Streamlit 不鼓励在主函数中使用 while True**，因为它会阻止其他输入事件的发生。
+    # --- 脚本末尾：定时刷新机制 (实现动态效果) ---
+    
+    # 检查是否需要刷新（例如每0.5秒）
+    if time.time() - st.session_state.last_update > 0.5:
+        # 更新时间戳
+        st.session_state.last_update = time.time()
+        # 触发 Streamlit 重新运行整个脚本，实现 Dashboard 的动态更新
+        st.rerun()
 
-        # 解决方案：将预设按钮点击的逻辑改为仅更新 session_state，并依赖于 `while True` 的下一次迭代来刷新聊天记录。
-
-        for preset_name, preset_text in presets.items():
-             if st.button(f"{preset_name}: {preset_text}", key=preset_name):
-                # 仅将用户消息添加到 session_state，不立即执行模型推理和渲染
-                st.session_state.messages.append({"role": "user", "content": preset_text})
-
-                # 模拟模型响应（可以修改为真实的 gemini_agent_response 调用）
-                # 这里为了不阻塞 while True 循环，将复杂的交互逻辑简化，
-                # 实际部署时应考虑 Streamlit Cloud 的限制。
-                
-                # 立即执行并显示结果，但会和 while True 冲突，需注意。
-                with st.chat_message("user"):
-                     st.markdown(preset_text)
-
-                with st.chat_message("assistant"):
-                    with st.spinner("智能体推理中..."):
-                        response = gemini_agent_response(preset_text, system_status)
-                    
-                    full_response = ""
-                    message_placeholder = st.empty()
-                    for chunk in response.split():
-                        full_response += chunk + " "
-                        time.sleep(0.01)
-                        message_placeholder.markdown(full_response + "▌")
-                    message_placeholder.markdown(full_response)
-                
-                st.session_state.messages.append({"role": "assistant", "content": response})
-                # 此处省略 st.rerun() 以避免与 while True 冲突
 
 if __name__ == "__main__":
     main()
