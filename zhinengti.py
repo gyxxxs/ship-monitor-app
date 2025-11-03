@@ -79,7 +79,6 @@ AVAILABLE_TOOLS = {
 def simulate_current_data(t, fault_scenario="normal", prediction_mode=False):
     """
     模拟更真实的船舶电流数据
-    fault_scenario: 'normal', 'early_arc', 'severe_arc', 'motor_start'
     """
     base_frequency = 50
     # 模拟波形滚动，加入一个随机相位偏移
@@ -93,7 +92,7 @@ def simulate_current_data(t, fault_scenario="normal", prediction_mode=False):
     
     if fault_scenario == "early_arc":
         # 早期电弧特征:间歇性高频噪声
-        mask = (time_series % 0.1 < 0.02)  # 10%时间出现电弧
+        mask = (time_series % 0.1 < 0.02)
         high_freq = np.sin(2 * np.pi * 5000 * time_series) * 0.3
         current += high_freq * mask
         
@@ -109,7 +108,6 @@ def simulate_current_data(t, fault_scenario="normal", prediction_mode=False):
 
     if prediction_mode:
         # 预测模式下的趋势特征
-        # 在模拟数据上叠加一个逐渐增大的趋势（Informer预测的风险）
         trend_factor = (time.time() - st.session_state.last_update) / 10 
         trend = 0.5 * np.exp(-time_series * 3) * np.sin(2 * np.pi * 150 * time_series) * (1 + trend_factor)
         current += trend
@@ -120,15 +118,12 @@ def simulate_current_data(t, fault_scenario="normal", prediction_mode=False):
 def dl_model_inference(data, fault_scenario):
     """模拟双重深度学习引擎的推理结果"""
     
-    # 1D-DSTN/1D-DITN 检测结果
     if fault_scenario == "severe_arc":
         return "二级预警 (故障确认)", 97.5, "severe_arc"
     elif fault_scenario == "early_arc":
-        # 模拟预警置信度随时间缓慢升高
         if 'early_arc_confidence' not in st.session_state:
              st.session_state.early_arc_confidence = 70.0
         
-        # 模拟置信度缓慢增加
         st.session_state.early_arc_confidence = min(90.0, st.session_state.early_arc_confidence + 0.5) 
 
         if st.session_state.early_arc_confidence > 70.0:
@@ -139,22 +134,19 @@ def dl_model_inference(data, fault_scenario):
     elif fault_scenario == "motor_start":
         return "干扰信号 (电机启动)", 10.0, "motor_start"
     else:
-        # 正常运行时重置预警置信度
         st.session_state.early_arc_confidence = 70.0 if 'early_arc_confidence' in st.session_state else 70.0
         return "运行正常 (安全)", 2.0, "normal"
 
-# --- 3. 智能体核心逻辑 (与原代码保持一致) ---
+# --- 3. 智能体核心逻辑 (保持不变) ---
 @st.cache_resource
 def get_gemini_client():
     """安全地获取 Gemini 客户端"""
     try:
         if "gemini_api_key" not in st.secrets:
-            # 仅在 Streamlit 运行时显示，方便调试
             return None 
         GEMINI_API_KEY = st.secrets["gemini_api_key"]
         return genai.Client(api_key=GEMINI_API_KEY)
     except Exception as e:
-        # 仅在 Streamlit 运行时显示，方便调试
         st.error(f"初始化 Gemini 客户端失败: {e}")
         return None
 
@@ -165,7 +157,6 @@ def gemini_agent_response(user_query: str, system_status: dict):
     if client is None:
         return "⚠️ Gemini 客户端未初始化（可能缺少 API Key），无法执行 AI 推理。请检查配置。"
         
-    # 构建系统状态上下文
     status_context = (
         f"【实时系统状态】\n"
         f"- 检测状态: {system_status['detection_status']}\n"
@@ -175,7 +166,6 @@ def gemini_agent_response(user_query: str, system_status: dict):
         f"- 时间戳: {system_status['timestamp']}\n"
     )
     
-    # RAG检索结果:船舶电气安全知识库精要
     GROUNDING_FACTS = (
         "【RAG检索结果:船舶电气安全知识库精要】\n"
         "--- 1. 预测与预警(基于 Informer 模型)---\n"
@@ -204,16 +194,14 @@ def gemini_agent_response(user_query: str, system_status: dict):
             tools=list(AVAILABLE_TOOLS.values()),
         )
         
-        # 第一次调用：让模型决定是否进行工具调用
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=full_prompt,
             config=config,
         )
         
-        # 检查是否有工具调用
         if response.function_calls:
-            function_call = response.function_calls[0] # 只处理第一个工具调用
+            function_call = response.function_calls[0]
             tool_name = function_call.name
             tool_args = dict(function_call.args)
             
@@ -231,10 +219,8 @@ def gemini_agent_response(user_query: str, system_status: dict):
                 
                 
                 try:
-                    # 执行工具调用
                     tool_result = AVAILABLE_TOOLS[tool_name](**tool_args)
                     
-                    # 第二次调用：使用工具结果生成最终响应
                     response_after_tool = client.models.generate_content(
                         model='gemini-2.5-flash',
                         contents=[
@@ -249,11 +235,9 @@ def gemini_agent_response(user_query: str, system_status: dict):
                     st.warning(f"工具 {tool_name} 执行失败: {tool_error}")
                     pass 
 
-        # 如果没有工具调用或工具调用失败，使用模型的自主回答
         return response.text
 
     except Exception as e:
-        # 完整的错误处理及降级响应
         error_msg = f"智能体 API 调用失败。错误信息: {e}"
         st.error(error_msg)
         
@@ -284,12 +268,16 @@ def main():
         st.session_state.fault_scenario = "normal"
     if 'circuit_id' not in st.session_state:
         st.session_state.circuit_id = "03号舱回路"
+    # --- 关键修改 1: 初始化 last_update ---
     if 'last_update' not in st.session_state:
         st.session_state.last_update = time.time()
+    # --- 关键修改 2: 每次 Rerun 开始时更新 last_update ---
+    # 这确保了无论 Rerun 是由用户交互还是定时器触发，时间基线都是最新的
+    st.session_state.last_update = time.time() 
+    
     if 'early_arc_confidence' not in st.session_state:
         st.session_state.early_arc_confidence = 70.0 
 
-    # 检查密钥
     get_gemini_client()
 
     # 侧边栏 - 系统配置 (保持不变)
@@ -312,7 +300,6 @@ def main():
             "严重电弧故障": "severe_arc",
             "电机启动干扰": "motor_start"
         }
-        # 当侧边栏变化时，Streamlit 会自动 Rerun，更新 st.session_state.fault_scenario
         st.session_state.fault_scenario = scenario_map[scenario]
         
         st.subheader("系统信息")
@@ -325,11 +312,10 @@ def main():
 
     col1, col2 = st.columns([3, 2])
 
-    # --- 实时监测 Dashboard (单次执行，依靠 Rerun 刷新) ---
+    # --- 实时监测 Dashboard ---
     with col1:
         st.header("📊 实时监测 Dashboard")
         
-        # 实时数据生成 (每次 Rerun 都生成新数据)
         t_series, current_data = simulate_current_data(
             t=4000, 
             fault_scenario=st.session_state.fault_scenario,
@@ -400,16 +386,14 @@ def main():
         else:
             st.success("✅ **运行正常** - 系统稳定，故障率低。")
 
-    # --- 智能体交互中心 (恢复交互) ---
+    # --- 智能体交互中心 (保持不变) ---
     with col2:
         st.header("💬 智能体交互中心")
         
-        # 显示历史消息
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
         
-        # 预设问题
         st.subheader("💡 预设问题")
         presets = {
             "前瞻预警": "当前波形走势是否正常?有无潜在的电弧风险?",
@@ -418,26 +402,20 @@ def main():
             "维护指导": "根据当前预警生成维护工单"
         }
         
-        # 使用列布局来优化按钮显示
         preset_cols = st.columns(2)
         
-        # 处理预设按钮的点击
         for i, (preset_name, preset_text) in enumerate(presets.items()):
             col = preset_cols[i % 2]
             if col.button(f"{preset_name}", key=preset_name):
-                # 保存用户消息
                 st.session_state.messages.append({"role": "user", "content": preset_text})
                 
-                # 在本次 Rerun 中立即显示用户消息
                 with st.chat_message("user"):
                     st.markdown(preset_text)
 
-                # 生成智能体响应
                 with st.chat_message("assistant"):
                     with st.spinner("智能体推理中..."):
                         response = gemini_agent_response(preset_text, system_status)
                     
-                    # 模拟打字效果
                     full_response = ""
                     message_placeholder = st.empty()
                     for chunk in response.split():
@@ -446,7 +424,6 @@ def main():
                         message_placeholder.markdown(full_response + "▌")
                     message_placeholder.markdown(full_response)
                         
-                # 保存智能体响应
                 st.session_state.messages.append({"role": "assistant", "content": response})
                 
                 # 强制 Rerun 以确保界面和状态完全同步
@@ -462,7 +439,6 @@ def main():
                 with st.spinner("智能体推理中..."):
                     response = gemini_agent_response(prompt, system_status)
                 
-                # 模拟打字效果
                 full_response = ""
                 message_placeholder = st.empty()
                 for chunk in response.split():
@@ -474,14 +450,21 @@ def main():
             st.session_state.messages.append({"role": "assistant", "content": response})
             st.rerun()
             
-    # --- 脚本末尾：定时刷新机制 (实现动态效果) ---
+    # --- 脚本末尾：定时刷新机制 (修复节流问题) ---
     
-    # 检查是否需要刷新（例如每0.5秒）
-    if time.time() - st.session_state.last_update > 0.5:
-        # 更新时间戳
-        st.session_state.last_update = time.time()
-        # 触发 Streamlit 重新运行整个脚本，实现 Dashboard 的动态更新
-        st.rerun()
+    # 我们知道脚本运行到这里用了不到 0.5s，所以 time.time() - last_update 应该小于 0.5。
+    # 我们需要引入一个短暂的暂停，然后强制 Rerun，让下一次运行能看到最新的 last_update 时间。
+    
+    # 强制等待 0.5s - (当前运行时间)
+    time_spent = time.time() - st.session_state.last_update 
+    sleep_time = max(0, 0.5 - time_spent) # 确保至少暂停到 0.5s
+    
+    # 关键：如果用户在右侧进行了交互，脚本会在这里暂停一下，然后立即 Rerun。
+    # 如果没有交互，脚本会等待直到 0.5s 满足，然后 Rerun。
+    time.sleep(sleep_time)
+
+    # 由于我们已经在开头更新了 last_update，这里直接强制 Rerun 即可实现连续循环
+    st.rerun()
 
 
 if __name__ == "__main__":
