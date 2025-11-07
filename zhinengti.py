@@ -399,7 +399,6 @@ def main():
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-        st.subheader("💡 预设问题")
         st.subheader("💡 快捷指令")
         presets = {
             "前瞻预警": "当前波形走势是否正常?有无潜在的电弧风险?",
