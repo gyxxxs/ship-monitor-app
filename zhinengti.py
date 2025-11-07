@@ -15,6 +15,7 @@ plt.rcParams['axes.unicode_minus'] = False
 
 # --- 0. 环境和工具定义 (保持不变) ---
 
+# 确保 BaseModel 的 description 字段足够详细
 class ReportInput(BaseModel):
     """用于生成详细故障诊断报告的工具"""
     fault_id: str = Field(description="当前故障事件的唯一标识ID,例如:'EVENT-20251028-001'")
@@ -151,12 +152,13 @@ def get_gemini_client():
         return None
 
 def gemini_agent_response(user_query: str, system_status: dict):
-    """增强的智能体响应函数"""
+    """修复后的智能体响应函数"""
     client = get_gemini_client()
     
     if client is None:
         return "⚠️ Gemini 客户端未初始化（可能缺少 API Key），无法执行 AI 推理。请检查配置。"
-        
+    
+    # 构建系统状态上下文
     status_context = (
         f"【实时系统状态】\n"
         f"- 检测状态: {system_status['detection_status']}\n"
@@ -184,19 +186,39 @@ def gemini_agent_response(user_query: str, system_status: dict):
         "你具备船舶电气安全的专业知识,同时也可以回答一般性问题。"
         "优先使用可用工具处理专业问题,对于工具无法处理的问题,请基于你的知识自主回答。"
         "回答要专业、准确、有帮助。"
+        "\n\n可用工具说明:"
+        "\n- generate_diagnostic_report: 生成详细的故障诊断报告"
+        "\n- check_system_stability: 查询系统稳定性状态" 
+        "\n- generate_maintenance_order: 生成维护工单"
     )
     
     full_prompt = (
         system_instruction + 
         "\n\n" + GROUNDING_FACTS + 
-        "\n\n" + status_context +  # 显式加入实时状态上下文
+        "\n\n" + status_context +
         "\n\n用户提问:" + user_query
     )
 
     try:
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
-            tools=list(AVAILABLE_TOOLS.values()),
+            tools=[types.Tool(function_declarations=[
+                types.FunctionDeclaration(
+                    name="generate_diagnostic_report",
+                    description="生成详细的故障诊断报告",
+                    parameters=ReportInput.model_json_schema()
+                ),
+                types.FunctionDeclaration(
+                    name="check_system_stability", 
+                    description="查询系统稳定性状态",
+                    parameters=StabilityInput.model_json_schema()
+                ),
+                types.FunctionDeclaration(
+                    name="generate_maintenance_order",
+                    description="生成维护工单",
+                    parameters=MaintenanceInput.model_json_schema()
+                )
+            ])],
         )
         
         response = client.models.generate_content(
@@ -205,60 +227,60 @@ def gemini_agent_response(user_query: str, system_status: dict):
             config=config,
         )
         
-        if response.function_calls:
-            function_call = response.function_calls[0]
-            tool_name = function_call.name
-            tool_args = dict(function_call.args)
-            
-            if tool_name in AVAILABLE_TOOLS:
-                
-                # 关键：确保工具参数使用最新的系统状态
-                if tool_name == "generate_diagnostic_report":
-                    tool_args['severity'] = system_status['detection_status']
-                    tool_args['fault_type'] = system_status['fault_type']
-                    tool_args['fault_id'] = f"EVENT-{datetime.now().strftime('%Y%m%d%H%M')}"
-                elif tool_name == "generate_maintenance_order":
-                    tool_args['fault_severity'] = system_status['detection_status']
-                    tool_args['circuit_id'] = system_status['circuit_id']
-                    tool_args['maintenance_type'] = "紧急" if "二级" in system_status['detection_status'] else "预防性"
-                
-                
-                try:
-                    tool_result = AVAILABLE_TOOLS[tool_name](**tool_args)
-                    
-                    response_after_tool = client.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=[
-                            types.Content(role="user", parts=[types.Part.from_text(full_prompt)]),
-                            types.Content(role="model", parts=[types.Part.from_function_call(function_call)]),
-                            types.Content(role="tool", parts=[types.Part.from_text(tool_result)]),
-                        ],
-                        config=types.GenerateContentConfig(system_instruction=system_instruction),
-                    )
-                    return response_after_tool.text
-                except Exception as tool_error:
-                    st.warning(f"工具 {tool_name} 执行失败: {tool_error}")
-                    pass 
-
+        # 修复工具调用逻辑
+        if hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'content') and candidate.content:
+                if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'function_call'):
+                            function_call = part.function_call
+                            tool_name = function_call.name
+                            
+                            if tool_name in AVAILABLE_TOOLS:
+                                # 根据工具类型构建正确的参数
+                                if tool_name == "generate_diagnostic_report":
+                                    tool_args = {
+                                        'fault_id': f"EVENT-{datetime.now().strftime('%Y%m%d%H%M')}",
+                                        'severity': system_status['detection_status'],
+                                        'fault_type': system_status['fault_type']
+                                    }
+                                elif tool_name == "generate_maintenance_order":
+                                    tool_args = {
+                                        'circuit_id': system_status['circuit_id'],
+                                        'fault_severity': system_status['detection_status'],
+                                        'maintenance_type': "紧急" if "二级" in system_status['detection_status'] else "预防性"
+                                    }
+                                elif tool_name == "check_system_stability":
+                                    tool_args = {}
+                                
+                                try:
+                                    # 执行工具
+                                    tool_result = AVAILABLE_TOOLS[tool_name](**tool_args)
+                                    
+                                    # 使用工具结果生成最终响应
+                                    response_after_tool = client.models.generate_content(
+                                        model='gemini-2.5-flash',
+                                        contents=[
+                                            types.Content(role="user", parts=[types.Part.from_text(full_prompt)]),
+                                            types.Content(role="model", parts=[types.Part.from_function_call(function_call)]),
+                                            types.Content(role="tool", parts=[types.Part.from_text(tool_result)]),
+                                        ],
+                                        config=types.GenerateContentConfig(system_instruction=system_instruction),
+                                    )
+                                    return response_after_tool.text
+                                except Exception as tool_error:
+                                    return f"❌ 工具执行失败: {tool_error}\n\n请检查工具参数配置。"
+        
+        # 如果没有工具调用，返回模型的直接响应
         return response.text
 
     except Exception as e:
         error_msg = f"智能体 API 调用失败。错误信息: {e}"
         st.error(error_msg)
         
-        fallback_responses = {
-            "greeting": "您好!我是船舶电气安全助手。当前系统连接有些问题,但我能帮助分析故障预警、生成诊断报告和维护工单。",
-            "status": f"当前监测状态:{system_status['detection_status']},置信度:{system_status['confidence']:.1f}%。由于系统暂时性问题,无法获取详细信息。",
-            "general": "抱歉,当前系统暂时无法处理您的请求。请检查网络连接或稍后重试。对于船舶电气安全问题,通常建议检查电缆连接紧固性和绝缘状态。"
-        }
-        
-        user_query_lower = user_query.lower()
-        if any(word in user_query_lower for word in ['你好', '您好', 'hello', 'hi']):
-            return fallback_responses['greeting']
-        elif any(word in user_query_lower for word in ['状态', '检测', '预警', '故障']):
-            return fallback_responses['status']
-        else:
-            return fallback_responses['general']
+        # 简化的回退响应
+        return f"当前系统状态: {system_status['detection_status']}, 置信度: {system_status['confidence']:.1f}%。由于系统暂时性问题，详细分析暂不可用。"
 
 # --- 4. 主界面 ---
 def main():
