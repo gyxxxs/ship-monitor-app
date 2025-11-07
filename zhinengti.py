@@ -693,7 +693,7 @@ presets = {
     "📋 规范查询": "查询船级社关于电弧故障检测的相关规范要求"
 }
         
-        preset_cols = st.columns(2)
+        presets = st.columns(2)
         
         for i, (preset_name, preset_text) in enumerate(presets.items()):
             col = preset_cols[i % 2]
