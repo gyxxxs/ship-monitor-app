@@ -3,11 +3,24 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 import time
+import os
+import tempfile
 from datetime import datetime
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 import json
+
+# 新增导入 - RAG和模型诊断
+try:
+    from knowledge_base import KnowledgeBase, init_knowledge_base
+    from model_diagnostics import ModelDiagnostics
+    RAG_AVAILABLE = True
+    MODEL_DIAGNOSTICS_AVAILABLE = True
+except ImportError as e:
+    print(f"导入模块失败: {e}，将使用模拟模式")
+    RAG_AVAILABLE = False
+    MODEL_DIAGNOSTICS_AVAILABLE = False
 
 # --- matplotlib 中文字体配置 ---
 plt.rcParams['font.sans-serif'] = ['WenQuanYi Zen Hei', 'WenQuanYi Micro Hei', 'DejaVu Sans']
@@ -114,10 +127,24 @@ def simulate_current_data(t, fault_scenario="normal", prediction_mode=False):
 
     return time_series * 1000, current
 
-# --- 2. 增强的模型推理模拟 (保持不变) ---
+# --- 2. 增强的模型推理 (集成真实模型) ---
+@st.cache_resource
+def get_model_diagnostics():
+    """获取模型诊断实例"""
+    if MODEL_DIAGNOSTICS_AVAILABLE:
+        return ModelDiagnostics()
+    return None
+
 def dl_model_inference(data, fault_scenario):
-    """模拟双重深度学习引擎的推理结果"""
+    """使用真实深度学习模型进行推理"""
+    model_diagnostics = get_model_diagnostics()
     
+    if model_diagnostics is not None:
+        # 使用真实模型推理
+        status_text, confidence, fault_type = model_diagnostics.inference(data, fault_scenario)
+        return status_text, confidence, fault_type
+    else:
+        # 回退到模拟模式
     if fault_scenario == "severe_arc":
         return "二级预警 (故障确认)", 97.5, "severe_arc"
     elif fault_scenario == "early_arc":
@@ -137,7 +164,7 @@ def dl_model_inference(data, fault_scenario):
         st.session_state.early_arc_confidence = 70.0 if 'early_arc_confidence' in st.session_state else 70.0
         return "运行正常 (安全)", 2.0, "normal"
 
-# --- 3. 智能体核心逻辑 (保持不变) ---
+# --- 3. 智能体核心逻辑 (集成RAG) ---
 @st.cache_resource
 def get_gemini_client():
     """安全地获取 Gemini 客户端"""
@@ -150,8 +177,15 @@ def get_gemini_client():
         st.error(f"初始化 Gemini 客户端失败: {e}")
         return None
 
+@st.cache_resource
+def get_knowledge_base():
+    """获取知识库实例"""
+    if RAG_AVAILABLE:
+        return init_knowledge_base()
+        return None
+
 def gemini_agent_response(user_query: str, system_status: dict):
-    """增强的智能体响应函数"""
+    """增强的智能体响应函数 - 集成RAG"""
     client = get_gemini_client()
     
     if client is None:
@@ -166,7 +200,13 @@ def gemini_agent_response(user_query: str, system_status: dict):
         f"- 时间戳: {system_status['timestamp']}\n"
     )
     
-    GROUNDING_FACTS = (
+    # 使用RAG检索（如果可用）
+    kb = get_knowledge_base()
+    if kb is not None:
+        retrieval_results = kb.format_retrieval_results(user_query, k=5)
+    else:
+        # 回退到硬编码知识
+        retrieval_results = (
         "【RAG检索结果:船舶电气安全知识库精要】\n"
         "--- 1. 预测与预警(基于 Informer 模型)---\n"
         " - **一级预警特征**:电流波形呈现不规则高频震荡(1-5kHz),幅值变化±15%,这是早期电弧的明确信号。\n"
@@ -188,7 +228,7 @@ def gemini_agent_response(user_query: str, system_status: dict):
     
     full_prompt = (
         system_instruction + 
-        "\n\n" + GROUNDING_FACTS + 
+        "\n\n" + retrieval_results + 
         "\n\n" + status_context +  # 显式加入实时状态上下文
         "\n\n用户提问:" + user_query
     )
@@ -314,6 +354,154 @@ def main():
         - ☁️ 岸基智能体
         - 🔗 船岸协同
         """)
+        
+        # 新增：知识库管理
+        st.subheader("📚 知识库管理")
+        if RAG_AVAILABLE:
+            kb = get_knowledge_base()
+            if kb:
+                stats = kb.get_statistics()
+                doc_count = stats.get('total_chunks', 0)
+                doc_num = stats.get('total_documents', 0)
+                
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.metric("文档片段", doc_count)
+                with col_b:
+                    st.metric("文档数量", doc_num)
+                
+                # 知识库统计信息
+                with st.expander("📊 详细统计"):
+                    st.json(stats)
+                
+                # 文档列表
+                with st.expander("📄 文档列表"):
+                    documents = kb.list_documents()
+                    if documents:
+                        for doc in documents:
+                            st.text(f"• {doc['name']} ({doc['chunks']} 片段, {doc.get('size', 0)/1024:.1f} KB)")
+                    else:
+                        st.info("暂无文档")
+                
+                # 添加文档
+                with st.expander("➕ 添加文档"):
+                    uploaded_files = st.file_uploader(
+                        "上传文档 (PDF, TXT, MD, DOCX, CSV)",
+                        type=['pdf', 'txt', 'md', 'docx', 'doc', 'csv'],
+                        accept_multiple_files=True
+                    )
+                    if uploaded_files and st.button("添加到知识库"):
+                        import tempfile
+                        temp_paths = []
+                        try:
+                            for uploaded_file in uploaded_files:
+                                # 保存到临时文件
+                                temp_file = tempfile.NamedTemporaryFile(
+                                    delete=False, 
+                                    suffix=os.path.splitext(uploaded_file.name)[1]
+                                )
+                                temp_file.write(uploaded_file.getvalue())
+                                temp_file.close()
+                                temp_paths.append(temp_file.name)
+                            
+                            # 添加到知识库
+                            with st.spinner("正在处理文档..."):
+                                results = kb.add_documents(temp_paths)
+                            
+                            # 显示结果
+                            if results['total_chunks'] > 0:
+                                st.success(f"✅ 成功添加 {len(results['success'])} 个文档，共 {results['total_chunks']} 个片段")
+                                if results['failed']:
+                                    st.warning(f"⚠️ {len(results['failed'])} 个文档添加失败")
+                            else:
+                                st.error("❌ 所有文档添加失败")
+                            
+                            # 清理临时文件
+                            for path in temp_paths:
+                                try:
+                                    os.unlink(path)
+                                except:
+                                    pass
+                            
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"添加文档失败: {e}")
+                            # 清理临时文件
+                            for path in temp_paths:
+                                try:
+                                    os.unlink(path)
+                                except:
+                                    pass
+                
+                # 知识库操作
+                with st.expander("⚙️ 知识库操作"):
+                    if st.button("🔄 刷新统计"):
+                        st.rerun()
+                    
+                    if st.button("🗑️ 清空知识库", type="secondary"):
+                        if st.session_state.get('confirm_clear', False):
+                            if kb.clear_all():
+                                st.success("知识库已清空")
+                                st.session_state.confirm_clear = False
+                                st.rerun()
+                            else:
+                                st.error("清空失败")
+                        else:
+                            st.session_state.confirm_clear = True
+                            st.warning("⚠️ 再次点击确认清空（此操作不可恢复）")
+            else:
+                st.warning("📚 知识库: 未初始化")
+        else:
+            st.warning("📚 知识库: 不可用（模拟模式）")
+        
+        # 新增：模型诊断
+        st.subheader("模型诊断")
+        if MODEL_DIAGNOSTICS_AVAILABLE:
+            model_diagnostics = get_model_diagnostics()
+            if model_diagnostics:
+                diagnostics = model_diagnostics.get_diagnostics()
+                
+                st.metric("总推理次数", diagnostics.get("total_inferences", 0))
+                st.metric("平均延迟", f"{diagnostics.get('average_inference_time_ms', 0):.1f} ms")
+                st.metric("平均置信度", f"{diagnostics.get('average_confidence', 0):.1f}%")
+                
+                if st.button("查看详细诊断报告"):
+                    st.json(diagnostics)
+                    
+                    # 可视化诊断指标
+                    if diagnostics.get("recent_confidence_trend"):
+                        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+                        
+                        # 置信度趋势
+                        ax1.plot(diagnostics["recent_confidence_trend"])
+                        ax1.set_title("最近10次推理置信度趋势")
+                        ax1.set_xlabel("推理次数")
+                        ax1.set_ylabel("置信度 (%)")
+                        ax1.grid(True)
+                        
+                        # 预测分布
+                        if diagnostics.get("recent_prediction_distribution"):
+                            dist = diagnostics["recent_prediction_distribution"]
+                            ax2.bar(dist.keys(), dist.values())
+                            ax2.set_title("最近100次预测分布")
+                            ax2.set_xlabel("故障类型")
+                            ax2.set_ylabel("次数")
+                            ax2.tick_params(axis='x', rotation=45)
+                        
+                        st.pyplot(fig)
+                        plt.close(fig)
+                
+                if st.button("导出诊断报告"):
+                    report_path = f"diagnostics_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                    model_diagnostics.export_diagnostics_report(report_path)
+                    st.success(f"报告已导出: {report_path}")
+                
+                if st.button("重置统计"):
+                    model_diagnostics.reset_statistics()
+                    st.success("统计信息已重置")
+                    st.rerun()
+        else:
+            st.warning("模型诊断: 不可用（模拟模式）")
 
     col1, col2 = st.columns([3, 2])
 
@@ -399,7 +587,7 @@ def main():
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
         
-        st.subheader("💡 快捷指令")
+        st.subheader("💡 预设问题")
         presets = {
             "前瞻预警": "当前波形走势是否正常?有无潜在的电弧风险?",
             "诊断查询": "请分析故障根本原因和船级社维护要求",
