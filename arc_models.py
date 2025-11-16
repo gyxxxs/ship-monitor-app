@@ -309,10 +309,29 @@ class ArcFaultModelSystem:
                 self.informer_exp = Exp_Informer(informer_args)
                 # 尝试自动查找checkpoint
                 if not informer_checkpoint:
-                    # 自动查找默认checkpoint
-                    default_checkpoint = Path(__file__).parent / "Arc Prediction Task" / "checkpoints" / "informer_custom_train"
-                    if default_checkpoint.exists():
-                        informer_checkpoint = str(default_checkpoint)
+                    BASE_DIR = Path(__file__).parent
+                    # 按优先级查找checkpoint
+                    candidates = [
+                        # 1. zhinengti.py同目录下的checkpoint.pth（最高优先级）
+                        BASE_DIR / "checkpoint.pth",
+                        # 2. zhinengti.py同目录下的checkpoint目录
+                        BASE_DIR / "checkpoint",
+                        # 3. 默认checkpoint目录
+                        BASE_DIR / "Arc Prediction Task" / "checkpoints" / "informer_custom_train",
+                    ]
+                    
+                    for candidate in candidates:
+                        if candidate.exists():
+                            # 如果是文件，直接使用
+                            if candidate.is_file():
+                                informer_checkpoint = str(candidate)
+                                break
+                            # 如果是目录，检查目录下是否有checkpoint.pth
+                            elif candidate.is_dir():
+                                checkpoint_file = candidate / "checkpoint.pth"
+                                if checkpoint_file.exists():
+                                    informer_checkpoint = str(candidate)
+                                    break
                 
                 if informer_checkpoint:
                     if self.load_informer_model(informer_checkpoint):
@@ -398,7 +417,21 @@ class ArcFaultModelSystem:
             return False
         
         try:
-            checkpoint_file = Path(checkpoint_path) / 'checkpoint.pth'
+            checkpoint_path_obj = Path(checkpoint_path)
+            
+            # 如果传入的是文件路径（checkpoint.pth），直接使用
+            if checkpoint_path_obj.is_file():
+                checkpoint_file = checkpoint_path_obj
+            # 如果传入的是目录，在目录下查找checkpoint.pth
+            elif checkpoint_path_obj.is_dir():
+                checkpoint_file = checkpoint_path_obj / 'checkpoint.pth'
+            else:
+                # 尝试作为文件路径
+                checkpoint_file = checkpoint_path_obj
+                if not checkpoint_file.exists():
+                    # 尝试作为目录下的文件
+                    checkpoint_file = checkpoint_path_obj / 'checkpoint.pth'
+            
             if not checkpoint_file.exists():
                 print(f"Informer checkpoint文件不存在: {checkpoint_file}")
                 return False
@@ -408,7 +441,7 @@ class ArcFaultModelSystem:
             )
             self.informer_model = self.informer_exp.model
             self.informer_model.eval()
-            print(f"Informer模型已从 {checkpoint_path} 加载")
+            print(f"Informer模型已从 {checkpoint_file} 加载")
             return True
         except Exception as e:
             print(f"加载Informer模型失败: {e}")
